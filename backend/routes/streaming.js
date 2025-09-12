@@ -624,10 +624,20 @@ router.post('/stop', authMiddleware, async (req, res) => {
       });
     } else {
       // Parar transmissão de playlist
-      const [transmissionRows] = await db.execute(
-        'SELECT * FROM transmissoes WHERE codigo = ? AND codigo_stm = ? AND status = "ativa"',
-        [transmission_id, userId]
-      );
+      let transmissionRows = [];
+      
+      if (transmission_id) {
+        [transmissionRows] = await db.execute(
+          'SELECT * FROM transmissoes WHERE codigo = ? AND codigo_stm = ? AND status = "ativa"',
+          [transmission_id, userId]
+        );
+      } else {
+        // Se não foi fornecido ID, buscar transmissão ativa do usuário
+        [transmissionRows] = await db.execute(
+          'SELECT * FROM transmissoes WHERE codigo_stm = ? AND status = "ativa" ORDER BY data_inicio DESC LIMIT 1',
+          [userId]
+        );
+      }
 
       if (transmissionRows.length === 0) {
         return res.status(404).json({ success: false, error: 'Transmissão não encontrada ou já finalizada' });
@@ -636,13 +646,47 @@ router.post('/stop', authMiddleware, async (req, res) => {
       const transmission = transmissionRows[0];
       const wowzaResult = await wowzaService.stopStream(transmission.wowza_stream_id);
 
-      await db.execute('UPDATE transmissoes SET status = "finalizada", data_fim = NOW() WHERE codigo = ?', [transmission_id]);
-      await db.execute('UPDATE transmissoes_plataformas SET status = "desconectada" WHERE transmissao_id = ?', [transmission_id]);
+      await db.execute('UPDATE transmissoes SET status = "finalizada", data_fim = NOW() WHERE codigo = ?', [transmission.codigo]);
+      await db.execute('UPDATE transmissoes_plataformas SET status = "desconectada" WHERE transmissao_id = ?', [transmission.codigo]);
 
       res.json({ success: true, message: 'Transmissão finalizada com sucesso', wowza_result: wowzaResult });
     }
   } catch (error) {
     console.error('Erro ao parar transmissão:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// --- ROTA POST /pause - Pausar transmissão ---
+router.post('/pause', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+
+    // Buscar transmissão ativa
+    const [transmissionRows] = await db.execute(
+      'SELECT * FROM transmissoes WHERE codigo_stm = ? AND status = "ativa" ORDER BY data_inicio DESC LIMIT 1',
+      [userId]
+    );
+
+    if (transmissionRows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Nenhuma transmissão ativa encontrada' });
+    }
+
+    const transmission = transmissionRows[0];
+
+    // Atualizar status para pausada
+    await db.execute(
+      'UPDATE transmissoes SET status = "pausada" WHERE codigo = ?',
+      [transmission.codigo]
+    );
+
+    res.json({ 
+      success: true, 
+      message: 'Transmissão pausada com sucesso',
+      transmission_id: transmission.codigo
+    });
+  } catch (error) {
+    console.error('Erro ao pausar transmissão:', error);
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
   }
 });

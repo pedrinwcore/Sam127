@@ -764,11 +764,14 @@ router.get('/status', authMiddleware, async (req, res) => {
 
     if (transmissionRows.length > 0) {
       const transmission = transmissionRows[0];
+      const isProduction = process.env.NODE_ENV === 'production';
+      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+      
       streamStatus = {
         ...streamStatus,
         has_active_transmission: true,
         transmission_type: 'playlist',
-        stream_url: `http://samhost.wcore.com.br:1935/${userLogin}/${userLogin}/playlist.m3u8`,
+        stream_url: `http://${wowzaHost}:1935/${userLogin}/${userLogin}/playlist.m3u8`,
         title: transmission.titulo,
         playlist_name: transmission.playlist_nome,
         playlist_id: transmission.codigo_playlist
@@ -776,23 +779,11 @@ router.get('/status', authMiddleware, async (req, res) => {
     } else {
       // Verificar stream OBS
       try {
-        const obsResponse = await fetch('/api/streaming/obs-status', {
-          headers: { Authorization: req.headers.authorization }
-        });
+        // Verificar diretamente no banco se há stream OBS ativo
+        // Por enquanto, assumir que não há OBS ativo se não há playlist
+        console.log('Nenhuma transmissão de playlist ativa encontrada');
         
-        if (obsResponse.ok) {
-          const obsData = await obsResponse.json();
-          if (obsData.success && obsData.obs_stream?.is_live) {
-            streamStatus = {
-              ...streamStatus,
-              has_active_transmission: true,
-              transmission_type: 'obs',
-              stream_url: `http://samhost.wcore.com.br:1935/samhost/${userLogin}_live/playlist.m3u8`,
-              title: `Transmissão OBS - ${userLogin}`,
-              playlist_name: null
-            };
-          }
-        }
+        // Fallback para verificar se há stream OBS (implementar se necessário)
       } catch (obsError) {
         console.warn('Erro ao verificar stream OBS:', obsError.message);
       }
