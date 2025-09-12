@@ -2,7 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { useAuth } from '../../context/AuthContext';
 import { useStream } from '../../context/StreamContext';
 import { 
-  Activity, Users, Zap, Clock, Play, Square, Radio, Video, 
+  Activity, Users, Zap, Clock, Play, Square, Radio, Video, Pause,
   TrendingUp, Globe, Monitor, Smartphone, Eye, Settings,
   AlertCircle, CheckCircle, Wifi, WifiOff, Server, HardDrive
 } from 'lucide-react';
@@ -80,6 +80,63 @@ const Dashboard: React.FC = () => {
     return () => clearInterval(interval);
   }, []);
 
+  const handlePauseTransmission = async () => {
+    if (!confirm('Deseja pausar a transmissão atual?')) return;
+    
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/pause', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        }
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        toast.success('Transmissão pausada');
+        loadStreamStatus();
+      } else {
+        toast.error(result.error || 'Erro ao pausar transmissão');
+      }
+    } catch (error) {
+      console.error('Erro ao pausar transmissão:', error);
+      toast.error('Erro ao pausar transmissão');
+    }
+  };
+
+  const handleStopTransmission = async () => {
+    if (!confirm('Deseja finalizar a transmissão atual?')) return;
+    
+    try {
+      const token = await getToken();
+      const response = await fetch('/api/streaming/stop', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          transmission_id: streamStatus?.transmission?.id,
+          stream_type: streamStatus?.stream_type || 'playlist'
+        })
+      });
+      
+      const result = await response.json();
+      if (result.success) {
+        toast.success('Transmissão finalizada');
+        loadStreamStatus();
+        setShowPlayer(false);
+        setCurrentVideoUrl('');
+      } else {
+        toast.error(result.error || 'Erro ao finalizar transmissão');
+      }
+    } catch (error) {
+      console.error('Erro ao finalizar transmissão:', error);
+      toast.error('Erro ao finalizar transmissão');
+    }
+  };
   const loadDashboardData = async () => {
     if (loadingStats) return; // Evitar múltiplas chamadas simultâneas
     
@@ -155,14 +212,14 @@ const Dashboard: React.FC = () => {
             const baseUrl = process.env.NODE_ENV === 'production' 
               ? 'http://samhost.wcore.com.br:3001'
               : 'http://localhost:3001';
-            setCurrentVideoUrl(`${baseUrl}/api/player-port/iframe?stream=${userLogin}_live&player=1&contador=true`);
+            setCurrentVideoUrl(`${baseUrl}/api/player-port/iframe?login=${userLogin}&stream=${userLogin}_live&player=1&contador=true`);
             setPlaylistName('Transmissão OBS');
           } else if (data.transmission) {
             // Para playlist, usar URL do player na porta do sistema
             const baseUrl = process.env.NODE_ENV === 'production' 
               ? 'http://samhost.wcore.com.br:3001'
               : 'http://localhost:3001';
-            setCurrentVideoUrl(`${baseUrl}/api/player-port/iframe?playlist=${data.transmission.codigo_playlist}&login=${userLogin}&player=1&contador=true`);
+            setCurrentVideoUrl(`${baseUrl}/api/player-port/iframe?login=${userLogin}&playlist=${data.transmission.codigo_playlist}&player=1&contador=true`);
             
             // Buscar nome da playlist
             if (data.transmission.codigo_playlist) {
@@ -539,13 +596,33 @@ const Dashboard: React.FC = () => {
           <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
             <h3 className="text-lg font-bold text-gray-900 mb-4">Ações Rápidas</h3>
             <div className="space-y-3">
-              <button
-                onClick={() => window.location.href = '/dashboard/iniciar-transmissao'}
-                className="w-full bg-gradient-to-r from-red-500 to-pink-600 text-white p-3 rounded-xl font-medium hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center justify-center"
-              >
-                <Radio className="h-5 w-5 mr-2" />
-                Iniciar Transmissão
-              </button>
+              {streamStatus?.is_live ? (
+                <>
+                  <button
+                    onClick={handlePauseTransmission}
+                    className="w-full bg-gradient-to-r from-yellow-500 to-orange-600 text-white p-3 rounded-xl font-medium hover:from-yellow-600 hover:to-orange-700 transition-all duration-200 flex items-center justify-center"
+                  >
+                    <Pause className="h-5 w-5 mr-2" />
+                    Pausar Transmissão
+                  </button>
+                  
+                  <button
+                    onClick={handleStopTransmission}
+                    className="w-full bg-gradient-to-r from-red-500 to-pink-600 text-white p-3 rounded-xl font-medium hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center justify-center"
+                  >
+                    <Square className="h-5 w-5 mr-2" />
+                    Finalizar Transmissão
+                  </button>
+                </>
+              ) : (
+                <button
+                  onClick={() => window.location.href = '/dashboard/iniciar-transmissao'}
+                  className="w-full bg-gradient-to-r from-red-500 to-pink-600 text-white p-3 rounded-xl font-medium hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center justify-center"
+                >
+                  <Radio className="h-5 w-5 mr-2" />
+                  Iniciar Transmissão
+                </button>
+              )}
               
               <button
                 onClick={() => window.location.href = '/dashboard/gerenciarvideos'}
@@ -595,59 +672,61 @@ const Dashboard: React.FC = () => {
             </div>
           </div>
 
-          {/* Recent Videos */}
-          <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
-            <h3 className="text-lg font-bold text-gray-900 mb-4">Vídeos Recentes</h3>
-            <div className="flex justify-between items-center mb-4">
-              <span className="text-sm text-gray-600">Últimos vídeos enviados</span>
-              <button
-                onClick={loadRecentVideos}
-                className="text-blue-600 hover:text-blue-800 text-sm"
-              >
-                Carregar
-              </button>
-            </div>
-            {recentVideos.length === 0 ? (
-              <div className="text-center py-8 text-gray-500">
-                <Video className="h-12 w-12 mx-auto mb-3 text-gray-300" />
-                <p className="text-sm">Nenhum vídeo encontrado</p>
+          {/* Recent Videos - Só mostrar se não há transmissão ativa */}
+          {!streamStatus?.is_live && (
+            <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
+              <h3 className="text-lg font-bold text-gray-900 mb-4">Vídeos Recentes</h3>
+              <div className="flex justify-between items-center mb-4">
+                <span className="text-sm text-gray-600">Últimos vídeos enviados</span>
                 <button
-                  onClick={() => window.location.href = '/dashboard/gerenciarvideos'}
-                  className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                  onClick={loadRecentVideos}
+                  className="text-blue-600 hover:text-blue-800 text-sm"
                 >
-                  Enviar primeiro vídeo
+                  Carregar
                 </button>
               </div>
-            ) : (
-              <div className="space-y-3">
-                {recentVideos.map((video) => (
-                  <div key={video.id} className="flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-lg transition-colors">
-                    <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
-                      <Video className="h-5 w-5 text-gray-600" />
+              {recentVideos.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  <Video className="h-12 w-12 mx-auto mb-3 text-gray-300" />
+                  <p className="text-sm">Nenhum vídeo encontrado</p>
+                  <button
+                    onClick={() => window.location.href = '/dashboard/gerenciarvideos'}
+                    className="mt-2 text-blue-600 hover:text-blue-800 text-sm font-medium"
+                  >
+                    Enviar primeiro vídeo
+                  </button>
+                </div>
+              ) : (
+                <div className="space-y-3">
+                  {recentVideos.map((video) => (
+                    <div key={video.id} className="flex items-center space-x-3 p-3 hover:bg-gray-50 rounded-lg transition-colors">
+                      <div className="w-10 h-10 bg-gray-100 rounded-lg flex items-center justify-center">
+                        <Video className="h-5 w-5 text-gray-600" />
+                      </div>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-medium text-gray-900 truncate">
+                          {video.nome}
+                        </p>
+                        <p className="text-xs text-gray-500">
+                          {video.duracao ? formatDuration(video.duracao) : 'N/A'}
+                        </p>
+                      </div>
+                      <button
+                        onClick={() => {
+                          // Usar IFrame player
+                          setCurrentVideoUrl(video.url);
+                          setShowPlayer(true);
+                        }}
+                        className="text-blue-600 hover:text-blue-800"
+                      >
+                        <Play className="h-4 w-4" />
+                      </button>
                     </div>
-                    <div className="flex-1 min-w-0">
-                      <p className="text-sm font-medium text-gray-900 truncate">
-                        {video.nome}
-                      </p>
-                      <p className="text-xs text-gray-500">
-                        {video.duracao ? formatDuration(video.duracao) : 'N/A'}
-                      </p>
-                    </div>
-                    <button
-                      onClick={() => {
-                        // Usar IFrame player
-                        setCurrentVideoUrl(video.url);
-                        setShowPlayer(true);
-                      }}
-                      className="text-blue-600 hover:text-blue-800"
-                    >
-                      <Play className="h-4 w-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          )}
         </div>
       </div>
 

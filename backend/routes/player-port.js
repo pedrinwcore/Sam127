@@ -16,6 +16,15 @@ router.get('/iframe', async (req, res) => {
     let vodPath = vod || '';
     let playlistId = playlist || '';
     
+    console.log('🎥 Player iFrame request:', {
+      login,
+      stream,
+      playlist,
+      video,
+      vod,
+      userLogin
+    });
+    
     // Construir URL baseado nos parâmetros
     if (vodPath) {
       // VOD específico
@@ -36,7 +45,7 @@ router.get('/iframe', async (req, res) => {
       title = `VOD: ${vodPath}`;
       isLive = false;
     } else if (playlistId) {
-      // Playlist específica - verificar se há transmissão ativa
+      // Playlist específica - verificar se há transmissão ativa no banco
       try {
         const [activeTransmission] = await db.execute(
           'SELECT t.*, p.nome as playlist_nome FROM transmissoes t LEFT JOIN playlists p ON t.codigo_playlist = p.id WHERE t.codigo_playlist = ? AND t.status = "ativa" LIMIT 1',
@@ -45,7 +54,7 @@ router.get('/iframe', async (req, res) => {
         
         if (activeTransmission.length > 0) {
           const transmission = activeTransmission[0];
-          // Buscar userLogin da transmissão
+          // Buscar userLogin correto da transmissão
           const [userRows] = await db.execute(
             'SELECT s.usuario, s.email FROM streamings s WHERE s.codigo_cliente = ? LIMIT 1',
             [transmission.codigo_stm]
@@ -57,7 +66,7 @@ router.get('/iframe', async (req, res) => {
           }
           
           const isProduction = process.env.NODE_ENV === 'production';
-          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
+          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
           videoUrl = `http://${wowzaHost}:1935/${userLogin}/${userLogin}/playlist.m3u8`;
           title = `Playlist: ${transmission.playlist_nome}`;
           isLive = true;
@@ -73,10 +82,40 @@ router.get('/iframe', async (req, res) => {
         title = 'Erro na Playlist';
         isLive = false;
       }
+    } else if (login && !stream && !video && !vod) {
+      // Stream padrão do usuário baseado no login
+      try {
+        // Verificar se há transmissão ativa para este usuário
+        const [userTransmission] = await db.execute(
+          'SELECT t.*, p.nome as playlist_nome FROM transmissoes t LEFT JOIN playlists p ON t.codigo_playlist = p.id LEFT JOIN streamings s ON t.codigo_stm = s.codigo_cliente WHERE (s.usuario = ? OR s.email LIKE ?) AND t.status = "ativa" LIMIT 1',
+          [login, `${login}@%`]
+        );
+        
+        if (userTransmission.length > 0) {
+          const transmission = userTransmission[0];
+          const isProduction = process.env.NODE_ENV === 'production';
+          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+          videoUrl = `http://${wowzaHost}:1935/${login}/${login}/playlist.m3u8`;
+          title = `Playlist: ${transmission.playlist_nome}`;
+          isLive = true;
+        } else {
+          // Fallback para OBS
+          const isProduction = process.env.NODE_ENV === 'production';
+          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+          videoUrl = `http://${wowzaHost}:1935/samhost/${login}_live/playlist.m3u8`;
+          title = `Stream: ${login}`;
+          isLive = true;
+        }
+      } catch (error) {
+        console.error('Erro ao verificar playlist:', error);
+        videoUrl = '';
+        title = 'Erro na Playlist';
+        isLive = false;
+      }
     } else if (stream) {
       // Stream ao vivo
       const isProduction = process.env.NODE_ENV === 'production';
-      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
+      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
       
       // Verificar se é stream de playlist ou OBS
       if (stream.includes('_playlist')) {
@@ -89,7 +128,7 @@ router.get('/iframe', async (req, res) => {
       }
       title = `Stream: ${stream}`;
       isLive = true;
-    } else if (playlist) {
+    } else if (userLogin && userLogin !== 'usuario') {
       // Playlist específica
       try {
         const [playlistRows] = await db.execute(
@@ -121,7 +160,7 @@ router.get('/iframe', async (req, res) => {
                 const finalFileName = fileName.endsWith('.mp4') ? fileName : fileName.replace(/\.[^/.]+$/, '.mp4');
                 
                 const isProduction = process.env.NODE_ENV === 'production';
-                const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
+                const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
                 videoUrl = `http://${wowzaHost}:1935/vod/_definst_/mp4:${userPath}/${folderName}/${finalFileName}/playlist.m3u8`;
               } else {
                 videoUrl = `/content/${videoPath}`;
@@ -160,7 +199,7 @@ router.get('/iframe', async (req, res) => {
               const finalFileName = fileName.endsWith('.mp4') ? fileName : fileName.replace(/\.[^/.]+$/, '.mp4');
               
               const isProduction = process.env.NODE_ENV === 'production';
-              const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
+              const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
               videoUrl = `http://${wowzaHost}:1935/vod/_definst_/mp4:${userPath}/${folderName}/${finalFileName}/playlist.m3u8`;
             } else {
               videoUrl = `/content/${videoPath}`;
@@ -174,35 +213,14 @@ router.get('/iframe', async (req, res) => {
       } catch (error) {
         console.error('Erro ao carregar vídeo:', error);
       }
-    } else if (userLogin && userLogin !== 'usuario') {
-      // Stream padrão do usuário
-      const isProduction = process.env.NODE_ENV === 'production';
-      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
-      
-      // Verificar se há transmissão de playlist ativa primeiro
-      try {
-        const [activePlaylist] = await db.execute(
-          'SELECT codigo FROM transmissoes WHERE codigo_stm = ? AND status = "ativa" LIMIT 1',
-          [userId]
-        );
-        
-        if (activePlaylist.length > 0) {
-          // Usar stream de playlist
-          videoUrl = `http://${wowzaHost}:1935/${userLogin}/${userLogin}/playlist.m3u8`;
-          title = `Playlist: ${userLogin}`;
-        } else {
-          // Usar stream OBS
-          videoUrl = `http://${wowzaHost}:1935/samhost/${userLogin}_live/playlist.m3u8`;
-          title = `Stream: ${userLogin}`;
-        }
-      } catch (error) {
-        // Fallback para OBS
-        videoUrl = `http://${wowzaHost}:1935/samhost/${userLogin}_live/playlist.m3u8`;
-        title = `Stream: ${userLogin}`;
-      }
-      title = `Stream: ${userLogin}`;
-      isLive = true;
     }
+
+    console.log('🎬 Player URL construída:', {
+      videoUrl,
+      title,
+      isLive,
+      userLogin
+    });
 
     // Gerar HTML do player
     const playerHTML = generatePlayerHTML({
@@ -219,11 +237,14 @@ router.get('/iframe', async (req, res) => {
       userLogin
     });
 
+    console.log('✅ Enviando HTML do player');
+    
     res.setHeader('Content-Type', 'text/html');
     res.send(playerHTML);
     
   } catch (error) {
     console.error('Erro no player iframe:', error);
+    console.error('Stack trace:', error.stack);
     res.status(500).send(generateErrorHTML('Erro no Player', 'Não foi possível carregar o conteúdo solicitado.'));
   }
 });
