@@ -825,12 +825,22 @@ router.post('/stop', authMiddleware, async (req, res) => {
 router.post('/pause', authMiddleware, async (req, res) => {
   try {
     const userId = req.user.id;
+    const { transmission_id } = req.body;
 
     // Buscar transmissão ativa
-    const [transmissionRows] = await db.execute(
-      'SELECT * FROM transmissoes WHERE codigo_stm = ? AND status = "ativa" ORDER BY data_inicio DESC LIMIT 1',
-      [userId]
-    );
+    let transmissionRows = [];
+    
+    if (transmission_id) {
+      [transmissionRows] = await db.execute(
+        'SELECT * FROM transmissoes WHERE codigo = ? AND codigo_stm = ? AND status = "ativa"',
+        [transmission_id, userId]
+      );
+    } else {
+      [transmissionRows] = await db.execute(
+        'SELECT * FROM transmissoes WHERE codigo_stm = ? AND status = "ativa" ORDER BY data_inicio DESC LIMIT 1',
+        [userId]
+      );
+    }
 
     if (transmissionRows.length === 0) {
       return res.status(404).json({ success: false, error: 'Nenhuma transmissão ativa encontrada' });
@@ -840,9 +850,22 @@ router.post('/pause', authMiddleware, async (req, res) => {
 
     // Atualizar status para pausada
     await db.execute(
-      'UPDATE transmissoes SET status = "pausada" WHERE codigo = ?',
+      'UPDATE transmissoes SET status = "pausada", data_pausa = NOW() WHERE codigo = ?',
       [transmission.codigo]
     );
+
+    // Pausar stream no Wowza (se possível)
+    try {
+      const wowzaService = new WowzaStreamingService();
+      const initialized = await wowzaService.initializeFromDatabase(userId);
+      
+      if (initialized) {
+        // Para SMIL, pausar significa parar temporariamente
+        await wowzaService.pauseSMILStream(transmission.wowza_stream_id);
+      }
+    } catch (wowzaError) {
+      console.warn('Erro ao pausar no Wowza:', wowzaError.message);
+    }
 
     res.json({ 
       success: true, 
@@ -851,6 +874,62 @@ router.post('/pause', authMiddleware, async (req, res) => {
     });
   } catch (error) {
     console.error('Erro ao pausar transmissão:', error);
+    res.status(500).json({ success: false, error: 'Erro interno do servidor' });
+  }
+});
+
+// --- ROTA POST /resume - Retomar transmissão pausada ---
+router.post('/resume', authMiddleware, async (req, res) => {
+  try {
+    const userId = req.user.id;
+    const { transmission_id } = req.body;
+
+    // Buscar transmissão pausada
+    let transmissionRows = [];
+    
+    if (transmission_id) {
+      [transmissionRows] = await db.execute(
+        'SELECT * FROM transmissoes WHERE codigo = ? AND codigo_stm = ? AND status = "pausada"',
+        [transmission_id, userId]
+      );
+    } else {
+      [transmissionRows] = await db.execute(
+        'SELECT * FROM transmissoes WHERE codigo_stm = ? AND status = "pausada" ORDER BY data_pausa DESC LIMIT 1',
+        [userId]
+      );
+    }
+
+    if (transmissionRows.length === 0) {
+      return res.status(404).json({ success: false, error: 'Nenhuma transmissão pausada encontrada' });
+    }
+
+    const transmission = transmissionRows[0];
+
+    // Atualizar status para ativa
+    await db.execute(
+      'UPDATE transmissoes SET status = "ativa", data_retomada = NOW() WHERE codigo = ?',
+      [transmission.codigo]
+    );
+
+    // Retomar stream no Wowza
+    try {
+      const wowzaService = new WowzaStreamingService();
+      const initialized = await wowzaService.initializeFromDatabase(userId);
+      
+      if (initialized) {
+        await wowzaService.resumeSMILStream(transmission.wowza_stream_id);
+      }
+    } catch (wowzaError) {
+      console.warn('Erro ao retomar no Wowza:', wowzaError.message);
+    }
+
+    res.json({ 
+      success: true, 
+      message: 'Transmissão retomada com sucesso',
+      transmission_id: transmission.codigo
+    });
+  } catch (error) {
+    console.error('Erro ao retomar transmissão:', error);
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
   }
 });
