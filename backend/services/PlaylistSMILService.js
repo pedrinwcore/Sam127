@@ -16,79 +16,6 @@ class PlaylistSMILService {
 </smil>`;
     }
 
-    // Gerar arquivo SMIL específico para uma playlist em transmissão
-    async generatePlaylistSMIL(userId, userLogin, serverId, playlistId) {
-        try {
-            console.log(`📄 Gerando SMIL específico para playlist ${playlistId} do usuário: ${userLogin}`);
-
-            // Buscar dados da playlist
-            const [playlistRows] = await db.execute(
-                'SELECT nome FROM playlists WHERE id = ? AND codigo_stm = ?',
-                [playlistId, userId]
-            );
-
-            if (playlistRows.length === 0) {
-                throw new Error('Playlist não encontrada');
-            }
-
-            const playlist = playlistRows[0];
-
-            // Buscar vídeos da playlist
-            const [videoRows] = await db.execute(
-                `SELECT v.nome, v.url, v.caminho, v.duracao 
-                 FROM videos v 
-                 WHERE v.playlist_id = ? AND v.codigo_cliente = ?
-                 ORDER BY v.ordem_playlist ASC, v.id ASC`,
-                [playlistId, userId]
-            );
-
-            if (videoRows.length === 0) {
-                throw new Error('Playlist não possui vídeos');
-            }
-
-            // Gerar conteúdo SMIL para transmissão ativa
-            let smilContent = `<?xml version="1.0" encoding="UTF-8"?>
-<smil title="${userLogin}">
-<head></head>
-<body>
-<stream name="${userLogin}"></stream>
-
-<playlist name="${playlist.nome.toLowerCase().replace(/[^a-z0-9]/g, '')}" playOnStream="${userLogin}" repeat="true" scheduled="now">
-`;
-
-            // Adicionar vídeos da playlist
-            for (const video of videoRows) {
-                const videoPath = this.buildVideoPathForSMIL(video, userLogin);
-                const duration = video.duracao || -1;
-                
-                smilContent += `<video length="${duration}" src="mp4:${videoPath}" start="0"></video>\n`;
-            }
-            
-            smilContent += `</playlist>
-
-</body>
-</smil>`;
-
-            // Salvar arquivo no servidor
-            const smilPath = `/home/streaming/${userLogin}/playlists_agendamentos.smil`;
-            await this.saveSMILToServer(serverId, userLogin, smilContent, smilPath);
-
-            console.log(`✅ Arquivo SMIL específico gerado para playlist ${playlistId}: ${smilPath}`);
-            return { 
-                success: true, 
-                smil_path: smilPath,
-                playlist_id: playlistId,
-                playlist_name: playlist.nome,
-                total_videos: videoRows.length,
-                smil_content: smilContent
-            };
-
-        } catch (error) {
-            console.error(`Erro ao gerar SMIL específico para playlist ${playlistId}:`, error);
-            return { success: false, error: error.message };
-        }
-    }
-
     // Gerar arquivo SMIL para um usuário específico
     async generateUserSMIL(userId, userLogin, serverId) {
         try {
@@ -121,8 +48,6 @@ class PlaylistSMILService {
                     pa.minuto,
                     pa.shuffle,
                     pa.frequencia,
-                    pa.finalizacao,
-                    pa.codigo_playlist_finalizacao,
                     p.nome as playlist_nome
                  FROM playlists_agendamentos pa
                  JOIN playlists p ON pa.codigo_playlist = p.id
@@ -216,14 +141,14 @@ class PlaylistSMILService {
                 if (activePlaylistRows.length > 0) {
                     const activePlaylistName = activePlaylistRows[0].nome.toLowerCase().replace(/[^a-z0-9]/g, '');
                     
-                    smilContent += `<playlist name="${activePlaylistName}" playOnStream="${userLogin}" repeat="true" scheduled="now">\n`;
+                    smilContent += `<playlist name="${activePlaylistName}" playOnStream="${userLogin}" repeat="true" scheduled="2024-01-01 00:00:00">\n`;
                     
                     // Buscar vídeos da playlist ativa
                     const [activeVideoRows] = await db.execute(
                         `SELECT v.nome, v.url, v.caminho, v.duracao 
                          FROM videos v 
                          WHERE v.playlist_id = ? AND v.codigo_cliente = ?
-                         ORDER BY v.id`,
+                         ORDER BY v.ordem_playlist ASC, v.id ASC`,
                         [activePlaylistId, userId]
                     );
 

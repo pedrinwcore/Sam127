@@ -550,9 +550,9 @@ class WowzaStreamingService {
     }
 
     // Iniciar transmissão de playlist do painel
-    async startSMILStream({ streamId, userId, userLogin, userConfig, playlistId, playlistName, platforms = [] }) {
+    async startPlaylistStream({ streamId, userId, userLogin, userConfig, playlistId, videos = [], platforms = [] }) {
         try {
-            console.log(`🎬 Iniciando transmissão SMIL - Stream ID: ${streamId}, Playlist: ${playlistName}`);
+            console.log(`Iniciando transmissão de playlist - Stream ID: ${streamId}`);
 
             // Verificar limites do usuário
             if (this.serverInfo) {
@@ -569,23 +569,22 @@ class WowzaStreamingService {
             const maxBitrate = userConfig.bitrate || 2500;
             const streamBitrate = Math.min(2500, maxBitrate);
 
-            // Para SMIL, usar aplicação específica do usuário
-            const appResult = await this.ensureUserApplication(userLogin, userConfig);
+            // Para playlist, usar aplicação específica do usuário
+            const appResult = await this.ensureApplication(userLogin);
             if (!appResult.success) {
                 throw new Error('Falha ao configurar aplicação no Wowza');
             }
 
-            // Para SMIL, usar nome específico que referencia o arquivo
-            const streamName = `${userLogin}_playlist`;
-            const smilStreamName = userLogin; // Nome do stream no arquivo SMIL
+            // Para playlist SMIL, usar nome específico
+            const streamName = `${userLogin}`;
 
             // Configurar push para plataformas
-            const pushResults = await this.setupMultiPlatformPush(smilStreamName, platforms, userConfig);
+            const pushResults = await this.setupMultiPlatformPush(streamName, platforms, userConfig);
 
             // Configurar gravação se habilitada
             let recordingResult = null;
             if (userConfig.gravar_stream !== 'nao') {
-                recordingResult = await this.startSMILRecording(smilStreamName, userLogin);
+                recordingResult = await this.startRecording(streamName, userLogin);
             }
 
             // Atualizar contador de streamings ativas no servidor
@@ -597,35 +596,31 @@ class WowzaStreamingService {
             }
 
             this.activeStreams.set(streamId, {
-                streamName: smilStreamName,
-                wowzaStreamId: streamId,
-                smilFile: 'playlists_agendamentos.smil',
+                streamName,
+                wowzaStreamId: streamName,
+                videos,
+                currentVideoIndex: 0,
                 startTime: new Date(),
                 playlistId,
-                playlistName,
                 platforms: pushResults,
                 viewers: 0,
                 bitrate: streamBitrate,
                 serverId: this.serverId,
                 userLogin,
                 recording: recordingResult?.success || false,
-                type: 'smil_playlist'
+                type: 'playlist'
             });
-
-            // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
-            const wowzaHost = 'stmv1.udicast.com';
 
             return {
                 success: true,
                 data: {
-                    streamName: smilStreamName,
-                    wowzaStreamId: streamId,
-                    rtmpUrl: `rtmp://${wowzaHost}:1935/${userLogin}`,
-                    streamKey: smilStreamName,
-                    playUrl: `http://${wowzaHost}:1935/${userLogin}/${smilStreamName}/playlist.m3u8`,
-                    hlsUrl: `http://${wowzaHost}:1935/${userLogin}/${smilStreamName}/playlist.m3u8`,
-                    dashUrl: `http://${wowzaHost}:1935/${userLogin}/${smilStreamName}/manifest.mpd`,
-                    smilFile: 'playlists_agendamentos.smil',
+                    streamName,
+                    wowzaStreamId: streamName,
+                    rtmpUrl: `rtmp://${this.wowzaHost}:1935/${userLogin}`,
+                    streamKey: streamName,
+                    playUrl: `http://${this.wowzaHost}:1935/${userLogin}/${streamName}/playlist.m3u8`,
+                    hlsUrl: `http://${this.wowzaHost}:1935/${userLogin}/${streamName}/playlist.m3u8`,
+                    dashUrl: `http://${this.wowzaHost}:1935/${userLogin}/${streamName}/manifest.mpd`,
                     pushResults,
                     serverInfo: this.serverInfo,
                     recording: recordingResult?.success || false,
@@ -635,82 +630,11 @@ class WowzaStreamingService {
             };
 
         } catch (error) {
-            console.error('Erro ao iniciar stream SMIL:', error);
+            console.error('Erro ao iniciar stream de playlist:', error);
             return {
                 success: false,
                 error: error.message
             };
-        }
-    }
-
-    // Garantir que aplicação específica do usuário existe
-    async ensureUserApplication(userLogin, userConfig) {
-        try {
-            console.log(`🔧 Verificando aplicação do usuário: ${userLogin}`);
-            
-            const checkResult = await this.makeWowzaRequest(
-                `/applications/${userLogin}`
-            );
-
-            if (checkResult.success) {
-                console.log(`✅ Aplicação ${userLogin} já existe`);
-                return { success: true, exists: true };
-            }
-
-            // Criar aplicação específica para o usuário
-            const appConfig = {
-                id: userLogin,
-                appType: 'Live',
-                name: userLogin,
-                description: `Live streaming app for user ${userLogin}`,
-                streamType: 'live-record',
-                storageDir: `/home/streaming/${userLogin}`,
-                playlistFile: 'playlists_agendamentos.smil'
-            };
-
-            console.log(`🔧 Criando aplicação para usuário ${userLogin}...`);
-            const createResult = await this.makeWowzaRequest(
-                `/applications`,
-                'POST',
-                appConfig
-            );
-
-            if (createResult.success) {
-                console.log(`✅ Aplicação ${userLogin} criada com sucesso`);
-                return { success: true, exists: false, created: true };
-            } else {
-                console.error(`❌ Erro ao criar aplicação ${userLogin}:`, createResult.data);
-                return { success: false, error: createResult.data };
-            }
-        } catch (error) {
-            console.error(`Erro ao garantir aplicação do usuário ${userLogin}:`, error);
-            return { success: false, error: error.message };
-        }
-    }
-
-    // Iniciar gravação específica para SMIL
-    async startSMILRecording(streamName, userLogin) {
-        try {
-            const recordingConfig = {
-                instanceName: `${streamName}_smil_recording`,
-                fileFormat: 'mp4',
-                segmentationType: 'none',
-                outputPath: `/home/streaming/${userLogin}/recordings/`,
-                recordData: true,
-                applicationName: userLogin, // Usar aplicação específica do usuário
-                streamName: streamName
-            };
-
-            const result = await this.makeWowzaRequest(
-                `/applications/${userLogin}/instances/_definst_/streamrecorders/${recordingConfig.instanceName}`,
-                'PUT',
-                recordingConfig
-            );
-
-            return result;
-        } catch (error) {
-            console.error('Erro ao iniciar gravação SMIL:', error);
-            return { success: false, error: error.message };
         }
     }
 
@@ -989,6 +913,48 @@ class WowzaStreamingService {
                 success: false,
                 error: error.message
             };
+        }
+    }
+
+    // Pausar stream SMIL
+    async pauseSMILStream(streamId) {
+        try {
+            console.log(`⏸️ Pausando stream SMIL: ${streamId}`);
+            
+            const streamInfo = this.activeStreams.get(streamId);
+            if (streamInfo) {
+                streamInfo.status = 'paused';
+                streamInfo.pausedAt = new Date();
+            }
+            
+            // No Wowza, pausar significa parar o stream temporariamente
+            const result = await this.makeWowzaRequest(
+                `/applications/${streamInfo?.userLogin || this.wowzaApplication}/instances/_definst_/incomingstreams/${streamInfo?.streamName}/actions/disconnectStream`,
+                'PUT'
+            );
+            
+            return { success: true, message: 'Stream pausado' };
+        } catch (error) {
+            console.error('Erro ao pausar stream SMIL:', error);
+            return { success: false, error: error.message };
+        }
+    }
+
+    // Retomar stream SMIL
+    async resumeSMILStream(streamId) {
+        try {
+            console.log(`▶️ Retomando stream SMIL: ${streamId}`);
+            
+            const streamInfo = this.activeStreams.get(streamId);
+            if (streamInfo) {
+                streamInfo.status = 'active';
+                streamInfo.resumedAt = new Date();
+            }
+            
+            return { success: true, message: 'Stream retomado' };
+        } catch (error) {
+            console.error('Erro ao retomar stream SMIL:', error);
+            return { success: false, error: error.message };
         }
     }
 

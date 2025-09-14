@@ -107,6 +107,8 @@ const IniciarTransmissao: React.FC = () => {
     playlist_id: '',
     platform_ids: [],
     enable_recording: false,
+    loop_playlist: false,
+    playlist_finalizacao_id: '',
     logo_id: '',
     logo_position: 'top-right',
     logo_opacity: 80
@@ -669,6 +671,46 @@ const IniciarTransmissao: React.FC = () => {
                   Habilitar gravação
                 </label>
               </div>
+
+              <div className="flex items-center">
+                <input
+                  id="loop"
+                  type="checkbox"
+                  checked={settings.loop_playlist}
+                  onChange={(e) => setSettings(prev => ({ ...prev, loop_playlist: e.target.checked }))}
+                  className="h-4 w-4 text-primary-600 focus:ring-primary-500 border-gray-300 rounded"
+                />
+                <label htmlFor="loop" className="ml-3 text-sm text-gray-700">
+                  Repetir playlist em loop
+                </label>
+              </div>
+            </div>
+
+            {/* Playlist de Finalização */}
+            <div>
+              <label htmlFor="playlist-finalizacao" className="block text-sm font-medium text-gray-700 mb-2">
+                Playlist de Finalização (Opcional)
+              </label>
+              <select
+                id="playlist-finalizacao"
+                value={settings.playlist_finalizacao_id}
+                onChange={(e) => setSettings(prev => ({ ...prev, playlist_finalizacao_id: e.target.value }))}
+                className="w-full px-4 py-2 border border-gray-300 rounded-md focus:ring-primary-500 focus:border-primary-500"
+                disabled={settings.loop_playlist}
+              >
+                <option value="">Nenhuma (finalizar automaticamente)</option>
+                {playlists.filter(p => p.id.toString() !== settings.playlist_id).map((playlist) => (
+                  <option key={playlist.id} value={playlist.id}>
+                    {playlist.nome} ({playlist.total_videos || 0} vídeos)
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-1">
+                {settings.loop_playlist 
+                  ? 'Desabilitado quando loop está ativo'
+                  : 'Playlist que será reproduzida após o término da playlist principal'
+                }
+              </p>
             </div>
 
             {/* Configurações de Logo */}

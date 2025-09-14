@@ -599,19 +599,19 @@ const Dashboard: React.FC = () => {
               {streamStatus?.is_live ? (
                 <>
                   <button
-                    onClick={handlePauseTransmission}
-                    className="w-full bg-gradient-to-r from-yellow-500 to-orange-600 text-white p-3 rounded-xl font-medium hover:from-yellow-600 hover:to-orange-700 transition-all duration-200 flex items-center justify-center"
-                  >
-                    <Pause className="h-5 w-5 mr-2" />
-                    Pausar Transmissão
-                  </button>
-                  
-                  <button
                     onClick={handleStopTransmission}
                     className="w-full bg-gradient-to-r from-red-500 to-pink-600 text-white p-3 rounded-xl font-medium hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center justify-center"
                   >
                     <Square className="h-5 w-5 mr-2" />
                     Finalizar Transmissão
+                  </button>
+                  
+                  <button
+                    onClick={() => window.location.href = '/dashboard/iniciar-transmissao'}
+                    className="w-full bg-gradient-to-r from-blue-500 to-indigo-600 text-white p-3 rounded-xl font-medium hover:from-blue-600 hover:to-indigo-700 transition-all duration-200 flex items-center justify-center"
+                  >
+                    <Settings className="h-5 w-5 mr-2" />
+                    Gerenciar Transmissão
                   </button>
                 </>
               ) : (
@@ -673,7 +673,7 @@ const Dashboard: React.FC = () => {
           </div>
 
           {/* Recent Videos - Só mostrar se não há transmissão ativa */}
-          {!streamStatus?.is_live && !loadingStats && (
+          {!streamStatus?.is_live && (
             <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
               <h3 className="text-lg font-bold text-gray-900 mb-4">Vídeos Recentes</h3>
               <div className="flex justify-between items-center mb-4">
@@ -725,39 +725,6 @@ const Dashboard: React.FC = () => {
                   ))}
                 </div>
               )}
-            </div>
-          )}
-
-          {/* Controles de Transmissão - Só mostrar se há transmissão ativa */}
-          {streamStatus?.is_live && (
-            <div className="bg-white rounded-2xl shadow-sm p-6 border border-gray-100">
-              <h3 className="text-lg font-bold text-gray-900 mb-4">Controles de Transmissão</h3>
-              <div className="space-y-3">
-                <button
-                  onClick={handlePauseTransmission}
-                  className="w-full bg-gradient-to-r from-yellow-500 to-orange-600 text-white p-3 rounded-xl font-medium hover:from-yellow-600 hover:to-orange-700 transition-all duration-200 flex items-center justify-center"
-                >
-                  <Pause className="h-5 w-5 mr-2" />
-                  Pausar Transmissão
-                </button>
-                
-                <button
-                  onClick={handleStopTransmission}
-                  className="w-full bg-gradient-to-r from-red-500 to-pink-600 text-white p-3 rounded-xl font-medium hover:from-red-600 hover:to-pink-700 transition-all duration-200 flex items-center justify-center"
-                >
-                  <Square className="h-5 w-5 mr-2" />
-                  Finalizar Transmissão
-                </button>
-                
-                <div className="mt-4 p-3 bg-blue-50 rounded-lg">
-                  <p className="text-blue-800 text-sm">
-                    <strong>📺 Transmissão Ativa:</strong> {playlistName || 'Playlist em reprodução'}
-                  </p>
-                  <p className="text-blue-700 text-xs mt-1">
-                    A playlist será finalizada automaticamente ao terminar todos os vídeos
-                  </p>
-                </div>
-              </div>
             </div>
           )}
         </div>
