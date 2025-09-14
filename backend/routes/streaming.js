@@ -420,7 +420,7 @@ router.post('/start', authMiddleware, async (req, res) => {
       settings = {},
       bitrate_override = null,
       enable_recording = false,
-      use_smil = false
+      use_smil = true // Sempre usar SMIL por padrão
     } = req.body;
 
     const userId = req.user.id;
@@ -434,7 +434,7 @@ router.post('/start', authMiddleware, async (req, res) => {
     const [userConfigRows] = await db.execute(
       `SELECT 
         bitrate, espectadores, espaco, espaco_usado, aplicacao,
-        status_gravando, transcoder, transcoder_qualidades
+        status_gravando, transcoder, transcoder_qualidades, codigo_servidor
        FROM streamings 
        WHERE codigo_cliente = ? OR codigo = ? LIMIT 1`,
       [userId, userId]
@@ -448,6 +448,7 @@ router.post('/start', authMiddleware, async (req, res) => {
     }
 
     const userConfig = userConfigRows[0];
+    const serverId = userConfig.codigo_servidor || 1;
 
     // Verificar se já existe transmissão ativa
     const [activeTransmission] = await db.execute(
@@ -459,16 +460,18 @@ router.post('/start', authMiddleware, async (req, res) => {
       return res.status(400).json({ success: false, error: 'Já existe uma transmissão ativa' });
     }
 
-    // Buscar vídeos da playlist (nova estrutura)
-    const [playlistVideos] = await db.execute(
-      `SELECT v.id, v.nome, v.url, v.caminho, v.duracao, v.bitrate_video
-       FROM videos v
-       WHERE v.playlist_id = ? AND v.codigo_cliente = ?
-       ORDER BY v.id`,
+    // Buscar dados da playlist
+    const [playlistRows] = await db.execute(
+      'SELECT nome, total_videos FROM playlists WHERE id = ? AND codigo_stm = ?',
       [playlist_id, userId]
     );
 
-    if (playlistVideos.length === 0) {
+    if (playlistRows.length === 0) {
+      return res.status(400).json({ success: false, error: 'Playlist não encontrada' });
+    }
+
+    const playlist = playlistRows[0];
+    if (!playlist.total_videos || playlist.total_videos === 0) {
       return res.status(400).json({ success: false, error: 'Playlist não possui vídeos' });
     }
 
@@ -511,11 +514,26 @@ router.post('/start', authMiddleware, async (req, res) => {
       platforms = platformRows;
     }
 
+    // Atualizar arquivo SMIL antes de iniciar transmissão
+    try {
+      console.log(`📄 Atualizando arquivo SMIL para transmissão da playlist ${playlist_id}...`);
+      const PlaylistSMILService = require('../services/PlaylistSMILService');
+      const smilResult = await PlaylistSMILService.generatePlaylistSMIL(userId, userLogin, serverId, playlist_id);
+      
+      if (!smilResult.success) {
+        console.warn('Aviso ao gerar SMIL:', smilResult.error);
+      } else {
+        console.log(`✅ Arquivo SMIL gerado: ${smilResult.smil_path}`);
+      }
+    } catch (smilError) {
+      console.warn('Erro ao atualizar arquivo SMIL:', smilError.message);
+    }
+
     // Gerar streamId único
     const streamId = `stream_${userId}_${Date.now()}`;
 
-    // Iniciar stream no Wowza
-    const wowzaResult = await wowzaService.startPlaylistStream({
+    // Iniciar stream SMIL no Wowza
+    const wowzaResult = await wowzaService.startSMILStream({
       streamId,
       userId,
       userLogin,
@@ -525,7 +543,7 @@ router.post('/start', authMiddleware, async (req, res) => {
         gravar_stream: enable_recording ? 'sim' : userConfig.status_gravando
       },
       playlistId: playlist_id,
-      videos: playlistVideos,
+      playlistName: playlist.nome,
       platforms: platforms.map(p => ({
         platform: { codigo: p.codigo, nome: p.nome, rtmp_base_url: p.rtmp_base_url },
         rtmp_url: p.rtmp_url,
@@ -541,9 +559,10 @@ router.post('/start', authMiddleware, async (req, res) => {
     const [transmissionResult] = await db.execute(
       `INSERT INTO transmissoes (
         codigo_stm, titulo, descricao, codigo_playlist, 
-        wowza_stream_id, status, data_inicio, settings, bitrate_usado, use_smil
-      ) VALUES (?, ?, ?, ?, ?, 'ativa', NOW(), ?, ?, ?)`,
-      [userId, titulo, descricao || '', playlist_id, streamId, JSON.stringify(settings), allowedBitrate, use_smil ? 1 : 0]
+        wowza_stream_id, status, data_inicio, settings, bitrate_usado, use_smil,
+        auto_finalize, loop_playlist, playlist_finalizacao_id
+      ) VALUES (?, ?, ?, ?, ?, 'ativa', NOW(), ?, ?, 1, 1, 0, ?)`,
+      [userId, titulo, descricao || '', playlist_id, streamId, JSON.stringify(settings), allowedBitrate, settings.playlist_finalizacao_id || null]
     );
 
     const transmissionId = transmissionResult.insertId;
@@ -557,16 +576,10 @@ router.post('/start', authMiddleware, async (req, res) => {
         [transmissionId, platformId]
       );
     }
-    // Se usar SMIL, atualizar arquivo SMIL do usuário
-    if (use_smil) {
-      try {
-        const PlaylistSMILService = require('../services/PlaylistSMILService');
-        await PlaylistSMILService.updateUserSMIL(userId, userLogin, wowzaResult.data?.serverId || 1);
-        console.log(`✅ Arquivo SMIL atualizado para transmissão da playlist ${playlist_id}`);
-      } catch (smilError) {
-        console.warn('Erro ao atualizar arquivo SMIL:', smilError.message);
-      }
-    }
+    // Iniciar monitoramento da transmissão para finalização automática
+    setTimeout(() => {
+      monitorTransmissionProgress(transmissionId, userId, userLogin, serverId);
+    }, 30000); // Aguardar 30 segundos antes de iniciar monitoramento
 
     res.json({
       success: true,
@@ -576,7 +589,8 @@ router.post('/start', authMiddleware, async (req, res) => {
         codigo_playlist: playlist_id,
         wowza_stream_id: streamId,
         bitrate_usado: allowedBitrate,
-        use_smil: use_smil
+        use_smil: true,
+        smil_file: `playlists_agendamentos.smil`
       },
       wowza_data: wowzaResult.data,
       user_limits: limitsCheck.limits,
@@ -584,7 +598,8 @@ router.post('/start', authMiddleware, async (req, res) => {
       player_urls: {
         base_url: process.env.NODE_ENV === 'production' ? 'http://samhost.wcore.com.br:3001' : 'http://localhost:3001',
         iframe_url: `${process.env.NODE_ENV === 'production' ? 'http://samhost.wcore.com.br:3001' : 'http://localhost:3001'}/api/player-port/iframe?playlist=${playlist_id}&login=${userLogin}`,
-        hls_url: `http://${process.env.NODE_ENV === 'production' ? 'samhost.wcore.com.br' : '51.222.156.223'}:1935/${userLogin}/${userLogin}/playlist.m3u8`
+        hls_url: `http://${process.env.NODE_ENV === 'production' ? 'samhost.wcore.com.br' : '51.222.156.223'}:1935/${userLogin}/${userLogin}/playlist.m3u8`,
+        smil_url: `http://${process.env.NODE_ENV === 'production' ? 'samhost.wcore.com.br' : '51.222.156.223'}:1935/${userLogin}/${userLogin}/playlist.m3u8`
       }
     });
   } catch (error) {
@@ -592,6 +607,155 @@ router.post('/start', authMiddleware, async (req, res) => {
     res.status(500).json({ success: false, error: 'Erro interno do servidor' });
   }
 });
+
+// Função para monitorar progresso da transmissão
+async function monitorTransmissionProgress(transmissionId, userId, userLogin, serverId) {
+  try {
+    console.log(`🔍 Iniciando monitoramento da transmissão ${transmissionId}...`);
+    
+    const monitorInterval = setInterval(async () => {
+      try {
+        // Verificar se transmissão ainda está ativa
+        const [transmissionRows] = await db.execute(
+          'SELECT * FROM transmissoes WHERE codigo = ? AND status = "ativa"',
+          [transmissionId]
+        );
+        
+        if (transmissionRows.length === 0) {
+          console.log(`⏹️ Transmissão ${transmissionId} não está mais ativa, parando monitoramento`);
+          clearInterval(monitorInterval);
+          return;
+        }
+        
+        const transmission = transmissionRows[0];
+        
+        // Verificar se playlist ainda está sendo reproduzida no Wowza
+        const wowzaService = new WowzaStreamingService();
+        const initialized = await wowzaService.initializeFromDatabase(userId);
+        
+        if (initialized) {
+          const streamStats = await wowzaService.getStreamStats(transmission.wowza_stream_id);
+          
+          // Se não há mais atividade por mais de 2 minutos, considerar finalizada
+          if (!streamStats.isActive) {
+            console.log(`🔚 Playlist ${transmission.codigo_playlist} finalizada automaticamente`);
+            
+            // Verificar se deve iniciar playlist de finalização
+            if (transmission.playlist_finalizacao_id) {
+              console.log(`🔄 Iniciando playlist de finalização: ${transmission.playlist_finalizacao_id}`);
+              await startFinalizationPlaylist(transmissionId, transmission.playlist_finalizacao_id, userId, userLogin, serverId);
+            } else if (transmission.loop_playlist) {
+              console.log(`🔁 Reiniciando playlist em loop: ${transmission.codigo_playlist}`);
+              await restartPlaylistLoop(transmissionId, transmission.codigo_playlist, userId, userLogin, serverId);
+            } else {
+              // Finalizar transmissão automaticamente
+              await finalizeTransmission(transmissionId, userId);
+              clearInterval(monitorInterval);
+            }
+          }
+        }
+        
+      } catch (monitorError) {
+        console.error('Erro no monitoramento da transmissão:', monitorError);
+      }
+    }, 60000); // Verificar a cada 1 minuto
+    
+    // Parar monitoramento após 24 horas para evitar loops infinitos
+    setTimeout(() => {
+      clearInterval(monitorInterval);
+      console.log(`⏰ Monitoramento da transmissão ${transmissionId} finalizado por timeout`);
+    }, 24 * 60 * 60 * 1000);
+    
+  } catch (error) {
+    console.error('Erro ao iniciar monitoramento:', error);
+  }
+}
+
+// Função para iniciar playlist de finalização
+async function startFinalizationPlaylist(transmissionId, playlistFinalizacaoId, userId, userLogin, serverId) {
+  try {
+    console.log(`🎬 Iniciando playlist de finalização: ${playlistFinalizacaoId}`);
+    
+    // Atualizar arquivo SMIL com playlist de finalização
+    const PlaylistSMILService = require('../services/PlaylistSMILService');
+    const smilResult = await PlaylistSMILService.generatePlaylistSMIL(userId, userLogin, serverId, playlistFinalizacaoId);
+    
+    if (smilResult.success) {
+      // Atualizar transmissão para usar playlist de finalização
+      await db.execute(
+        'UPDATE transmissoes SET codigo_playlist = ?, titulo = CONCAT(titulo, " - Finalização") WHERE codigo = ?',
+        [playlistFinalizacaoId, transmissionId]
+      );
+      
+      console.log(`✅ Playlist de finalização ${playlistFinalizacaoId} iniciada`);
+    } else {
+      console.error('Erro ao gerar SMIL de finalização:', smilResult.error);
+      await finalizeTransmission(transmissionId, userId);
+    }
+  } catch (error) {
+    console.error('Erro ao iniciar playlist de finalização:', error);
+    await finalizeTransmission(transmissionId, userId);
+  }
+}
+
+// Função para reiniciar playlist em loop
+async function restartPlaylistLoop(transmissionId, playlistId, userId, userLogin, serverId) {
+  try {
+    console.log(`🔁 Reiniciando playlist em loop: ${playlistId}`);
+    
+    // Regenerar arquivo SMIL
+    const PlaylistSMILService = require('../services/PlaylistSMILService');
+    const smilResult = await PlaylistSMILService.generatePlaylistSMIL(userId, userLogin, serverId, playlistId);
+    
+    if (smilResult.success) {
+      console.log(`✅ Playlist ${playlistId} reiniciada em loop`);
+    } else {
+      console.error('Erro ao reiniciar playlist em loop:', smilResult.error);
+      await finalizeTransmission(transmissionId, userId);
+    }
+  } catch (error) {
+    console.error('Erro ao reiniciar playlist em loop:', error);
+    await finalizeTransmission(transmissionId, userId);
+  }
+}
+
+// Função para finalizar transmissão automaticamente
+async function finalizeTransmission(transmissionId, userId) {
+  try {
+    console.log(`🔚 Finalizando transmissão automaticamente: ${transmissionId}`);
+    
+    // Atualizar status da transmissão
+    await db.execute(
+      'UPDATE transmissoes SET status = "finalizada", data_fim = NOW(), finalizacao_automatica = 1 WHERE codigo = ?',
+      [transmissionId]
+    );
+    
+    // Desconectar plataformas
+    await db.execute(
+      'UPDATE transmissoes_plataformas SET status = "desconectada" WHERE transmissao_id = ?',
+      [transmissionId]
+    );
+    
+    // Parar stream no Wowza
+    const wowzaService = new WowzaStreamingService();
+    const initialized = await wowzaService.initializeFromDatabase(userId);
+    
+    if (initialized) {
+      const [transmissionRows] = await db.execute(
+        'SELECT wowza_stream_id FROM transmissoes WHERE codigo = ?',
+        [transmissionId]
+      );
+      
+      if (transmissionRows.length > 0) {
+        await wowzaService.stopStream(transmissionRows[0].wowza_stream_id);
+      }
+    }
+    
+    console.log(`✅ Transmissão ${transmissionId} finalizada automaticamente`);
+  } catch (error) {
+    console.error('Erro ao finalizar transmissão automaticamente:', error);
+  }
+}
 
 // --- ROTA POST /stop ---
 router.post('/stop', authMiddleware, async (req, res) => {
