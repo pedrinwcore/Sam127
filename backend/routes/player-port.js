@@ -47,6 +47,7 @@ router.get('/iframe', async (req, res) => {
     } else if (playlistId) {
       // Playlist específica - verificar se há transmissão ativa no banco
       try {
+        console.log(`🔍 Verificando transmissão ativa para playlist ${playlistId}...`);
         const [activeTransmission] = await db.execute(
           'SELECT t.*, p.nome as playlist_nome FROM transmissoes t LEFT JOIN playlists p ON t.codigo_playlist = p.id WHERE t.codigo_playlist = ? AND t.status = "ativa" LIMIT 1',
           [playlistId]
@@ -54,6 +55,8 @@ router.get('/iframe', async (req, res) => {
         
         if (activeTransmission.length > 0) {
           const transmission = activeTransmission[0];
+          console.log(`✅ Transmissão ativa encontrada:`, transmission);
+          
           // Buscar userLogin correto da transmissão
           const [userRows] = await db.execute(
             'SELECT s.usuario, s.email FROM streamings s WHERE s.codigo_cliente = ? LIMIT 1',
@@ -66,14 +69,19 @@ router.get('/iframe', async (req, res) => {
           }
           
           const isProduction = process.env.NODE_ENV === 'production';
-          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
+          
+          // Para transmissão SMIL, usar URL específica
           videoUrl = `http://${wowzaHost}:1935/${userLogin}/${userLogin}/playlist.m3u8`;
           title = `Playlist: ${transmission.playlist_nome}`;
           isLive = true;
+          
+          console.log(`🎬 URL da playlist ativa: ${videoUrl}`);
         } else {
+          console.log(`⚠️ Playlist ${playlistId} não está em transmissão ativa`);
           // Playlist não está em transmissão - mostrar "sem sinal"
           videoUrl = '';
-          title = 'Playlist Offline';
+          title = `Playlist Offline - ${playlistId}`;
           isLive = false;
         }
       } catch (error) {
@@ -85,6 +93,7 @@ router.get('/iframe', async (req, res) => {
     } else if (login && !stream && !video && !vod) {
       // Stream padrão do usuário baseado no login
       try {
+        console.log(`🔍 Verificando transmissão ativa para usuário ${login}...`);
         // Verificar se há transmissão ativa para este usuário
         const [userTransmission] = await db.execute(
           'SELECT t.*, p.nome as playlist_nome FROM transmissoes t LEFT JOIN playlists p ON t.codigo_playlist = p.id LEFT JOIN streamings s ON t.codigo_stm = s.codigo_cliente WHERE (s.usuario = ? OR s.email LIKE ?) AND t.status = "ativa" LIMIT 1',
@@ -93,29 +102,31 @@ router.get('/iframe', async (req, res) => {
         
         if (userTransmission.length > 0) {
           const transmission = userTransmission[0];
+          console.log(`✅ Transmissão de usuário encontrada:`, transmission);
           const isProduction = process.env.NODE_ENV === 'production';
-          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
           videoUrl = `http://${wowzaHost}:1935/${login}/${login}/playlist.m3u8`;
           title = `Playlist: ${transmission.playlist_nome}`;
           isLive = true;
         } else {
+          console.log(`⚠️ Nenhuma transmissão ativa para usuário ${login}, verificando OBS...`);
           // Fallback para OBS
           const isProduction = process.env.NODE_ENV === 'production';
-          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+          const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
           videoUrl = `http://${wowzaHost}:1935/samhost/${login}_live/playlist.m3u8`;
           title = `Stream: ${login}`;
           isLive = true;
         }
       } catch (error) {
-        console.error('Erro ao verificar playlist:', error);
+        console.error('Erro ao verificar transmissão do usuário:', error);
         videoUrl = '';
-        title = 'Erro na Playlist';
+        title = 'Erro na Transmissão';
         isLive = false;
       }
     } else if (stream) {
       // Stream ao vivo
       const isProduction = process.env.NODE_ENV === 'production';
-      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : 'samhost.wcore.com.br';
+      const wowzaHost = isProduction ? 'samhost.wcore.com.br' : '51.222.156.223';
       
       // Verificar se é stream de playlist ou OBS
       if (stream.includes('_playlist')) {
@@ -512,8 +523,11 @@ function generateNoSignalHTML(title, userLogin, showCounter, showSharing) {
       <div class="bar"></div>
       <div class="bar"></div>
     </div>
-    <p>Playlist não está em transmissão</p>
+    <p>Nenhuma transmissão ativa</p>
     <p style="font-size: 0.8em; opacity: 0.7;">Usuário: ${userLogin}</p>
+    <p style="font-size: 0.6em; opacity: 0.5; margin-top: 10px;">
+      Aguardando início da transmissão...
+    </p>
     <p style="font-size: 0.7em; opacity: 0.5; margin-top: 20px;">
       Recarregando automaticamente...
     </p>
@@ -523,10 +537,10 @@ function generateNoSignalHTML(title, userLogin, showCounter, showSharing) {
     ${showCounter ? generateCounterScript(userLogin) : ''}
     ${showSharing ? generateSharingScript() : ''}
     
-    // Recarregar página a cada 30 segundos para verificar se playlist foi iniciada
+    // Recarregar página a cada 15 segundos para verificar se transmissão foi iniciada
     setTimeout(function() { 
       location.reload(); 
-    }, 30000);
+    }, 15000);
   </script>
 </body>
 </html>`;
