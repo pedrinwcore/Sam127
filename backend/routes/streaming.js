@@ -99,19 +99,8 @@ router.get('/obs-config', authMiddleware, async (req, res) => {
     }
 
     // Configurar URLs baseadas no ambiente
-    // Buscar domínio do servidor Wowza do banco
-    let streamingHost = 'stmv1.udicast.com'; // Fallback
-    try {
-        const [serverRows] = await db.execute(
-            'SELECT dominio, ip FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
-            [serverId]
-        );
-        if (serverRows.length > 0) {
-            streamingHost = serverRows[0].dominio || serverRows[0].ip || 'stmv1.udicast.com';
-        }
-    } catch (error) {
-        console.warn('Erro ao buscar domínio do servidor:', error.message);
-    }
+    // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
+    const streamingHost = 'stmv1.udicast.com';
     
     // Resposta final
     res.json({
@@ -592,6 +581,10 @@ router.post('/start', authMiddleware, async (req, res) => {
       monitorTransmissionProgress(transmissionId, userId, userLogin, serverId);
     }, 30000); // Aguardar 30 segundos antes de iniciar monitoramento
 
+    // Configurar URLs baseadas no ambiente
+    // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
+    const streamingHost = 'stmv1.udicast.com';
+
     res.json({
       success: true,
       transmission: {
@@ -609,8 +602,8 @@ router.post('/start', authMiddleware, async (req, res) => {
       player_urls: {
         base_url: process.env.NODE_ENV === 'production' ? 'http://samhost.wcore.com.br:3001' : 'http://localhost:3001',
         iframe_url: `${process.env.NODE_ENV === 'production' ? 'http://samhost.wcore.com.br:3001' : 'http://localhost:3001'}/api/player-port/iframe?playlist=${playlist_id}&login=${userLogin}`,
-        hls_url: `http://${process.env.NODE_ENV === 'production' ? 'samhost.wcore.com.br' : '51.222.156.223'}:1935/${userLogin}/${userLogin}/playlist.m3u8`,
-        smil_url: `http://${process.env.NODE_ENV === 'production' ? 'samhost.wcore.com.br' : '51.222.156.223'}:1935/${userLogin}/${userLogin}/playlist.m3u8`
+        hls_url: `http://${streamingHost}:1935/${userLogin}/${userLogin}/playlist.m3u8`,
+        smil_url: `http://${streamingHost}:1935/${userLogin}/${userLogin}/playlist.m3u8`
       }
     });
   } catch (error) {
