@@ -99,8 +99,19 @@ router.get('/obs-config', authMiddleware, async (req, res) => {
     }
 
     // Configurar URLs baseadas no ambiente
-    // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
-    const streamingHost = 'stmv1.udicast.com';
+    // Buscar domínio do servidor Wowza do banco
+    let streamingHost = 'stmv1.udicast.com'; // Fallback
+    try {
+        const [serverRows] = await db.execute(
+            'SELECT dominio, ip FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
+            [serverId]
+        );
+        if (serverRows.length > 0) {
+            streamingHost = serverRows[0].dominio || serverRows[0].ip || 'stmv1.udicast.com';
+        }
+    } catch (error) {
+        console.warn('Erro ao buscar domínio do servidor:', error.message);
+    }
     
     // Resposta final
     res.json({
