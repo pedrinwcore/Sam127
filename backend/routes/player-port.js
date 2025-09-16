@@ -79,10 +79,45 @@ router.get('/iframe', async (req, res) => {
           console.log(`🎬 URL da playlist ativa: ${videoUrl}`);
         } else {
           console.log(`⚠️ Playlist ${playlistId} não está em transmissão ativa`);
-          // Playlist não está em transmissão - mostrar "sem sinal"
-          videoUrl = '';
-          title = `Playlist Offline - ${playlistId}`;
-          isLive = false;
+          // Verificar se há stream OBS ativo como fallback
+          try {
+            const [userRows] = await db.execute(
+              'SELECT s.usuario, s.email FROM streamings s WHERE s.codigo_cliente = ? LIMIT 1',
+              [userId]
+            );
+            
+            if (userRows.length > 0) {
+              const userData = userRows[0];
+              const fallbackUserLogin = userData.usuario || (userData.email ? userData.email.split('@')[0] : userLogin);
+              
+              // Buscar domínio do servidor Wowza
+              let wowzaHost = 'stmv1.udicast.com';
+              try {
+                const [serverRows] = await db.execute(
+                  'SELECT dominio, ip FROM wowza_servers WHERE status = "ativo" LIMIT 1'
+                );
+                if (serverRows.length > 0) {
+                  wowzaHost = serverRows[0].dominio || serverRows[0].ip || 'stmv1.udicast.com';
+                }
+              } catch (error) {
+                console.warn('Erro ao buscar domínio do servidor:', error.message);
+              }
+              
+              videoUrl = `http://${wowzaHost}:1935/samhost/${fallbackUserLogin}_live/playlist.m3u8`;
+              title = `Stream OBS - ${fallbackUserLogin}`;
+              isLive = true;
+            } else {
+              // Playlist não está em transmissão - mostrar "sem sinal"
+              videoUrl = '';
+              title = `Playlist Offline - ${playlistId}`;
+              isLive = false;
+            }
+          } catch (error) {
+            console.error('Erro ao verificar fallback OBS:', error);
+            videoUrl = '';
+            title = `Playlist Offline - ${playlistId}`;
+            isLive = false;
+          }
         }
       } catch (error) {
         console.error('Erro ao verificar playlist:', error);

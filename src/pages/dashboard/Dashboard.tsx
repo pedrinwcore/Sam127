@@ -75,6 +75,16 @@ const Dashboard: React.FC = () => {
   useEffect(() => {
     loadDashboardData();
     
+    // Carregar HLS.js se não estiver disponível
+    if (typeof window !== 'undefined' && !window.Hls) {
+      const script = document.createElement('script');
+      script.src = 'https://cdn.jsdelivr.net/npm/hls.js@latest';
+      script.onload = () => {
+        console.log('✅ HLS.js carregado');
+      };
+      document.head.appendChild(script);
+    }
+    
     // Atualizar dados a cada 60 segundos (reduzido para melhor performance)
     const interval = setInterval(loadDashboardData, 60000);
     return () => clearInterval(interval);

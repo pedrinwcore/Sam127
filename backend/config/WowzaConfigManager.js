@@ -856,8 +856,8 @@ class WowzaConfigManager {
 
     // Construir URLs de transmissão ao vivo
     buildLiveStreamUrls(userLogin, serverId = null) {
-        // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
-        const wowzaHost = 'stmv1.udicast.com';
+        // Buscar domínio do servidor Wowza (será usado de forma assíncrona)
+        let wowzaHost = 'stmv1.udicast.com'; // Fallback
 
         return {
             // URL RTMP para OBS (usando aplicação específica do usuário)

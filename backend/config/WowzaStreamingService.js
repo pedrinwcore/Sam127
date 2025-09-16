@@ -306,8 +306,19 @@ class WowzaStreamingService {
             const maxBitrate = userConfig.bitrate || 2500;
             const streamKey = `${userLogin}_live`;
 
-            // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
-            const wowzaHost = 'stmv1.udicast.com';
+            // Buscar domínio do servidor Wowza do banco
+            let wowzaHost = 'stmv1.udicast.com'; // Fallback
+            try {
+                const [serverRows] = await db.execute(
+                    'SELECT dominio, ip FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
+                    [this.serverId || 1]
+                );
+                if (serverRows.length > 0) {
+                    wowzaHost = serverRows[0].dominio || serverRows[0].ip || 'stmv1.udicast.com';
+                }
+            } catch (error) {
+                console.warn('Erro ao buscar domínio do servidor:', error.message);
+            }
 
             const streamUrls = {
                 rtmp: `rtmp://${wowzaHost}:1935/samhost`,
@@ -1219,8 +1230,19 @@ class WowzaStreamingService {
             const maxBitrate = userConfig.bitrate || 2500;
             const streamKey = `${userLogin}_live`;
 
-            // SEMPRE usar domínio do servidor Wowza, NUNCA o domínio da aplicação
-            const wowzaHost = 'stmv1.udicast.com';
+            // Buscar domínio do servidor Wowza do banco
+            let wowzaHost = 'stmv1.udicast.com'; // Fallback
+            try {
+                const [serverRows] = await db.execute(
+                    'SELECT dominio, ip FROM wowza_servers WHERE codigo = ? AND status = "ativo"',
+                    [this.serverId || 1]
+                );
+                if (serverRows.length > 0) {
+                    wowzaHost = serverRows[0].dominio || serverRows[0].ip || 'stmv1.udicast.com';
+                }
+            } catch (error) {
+                console.warn('Erro ao buscar domínio do servidor:', error.message);
+            }
 
             const streamUrls = {
                 rtmp: `rtmp://${wowzaHost}:1935/samhost`,

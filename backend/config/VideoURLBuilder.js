@@ -36,15 +36,15 @@ class VideoURLBuilder {
             
             if (rows.length > 0) {
                 const server = rows[0];
-                // SEMPRE usar domínio do Wowza, NUNCA o domínio da aplicação
-                return server.dominio || 'stmv1.udicast.com';
+                // SEMPRE usar domínio do servidor Wowza
+                return server.dominio || server.ip || 'stmv1.udicast.com';
             }
             
-            // Fallback sempre para domínio do Wowza
+            // Fallback
             return 'stmv1.udicast.com';
         } catch (error) {
             console.error('Erro ao obter domínio do servidor:', error);
-            // Fallback sempre para domínio do Wowza
+            // Fallback
             return 'stmv1.udicast.com';
         }
     }
